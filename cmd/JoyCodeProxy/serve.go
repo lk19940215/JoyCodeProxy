@@ -92,8 +92,13 @@ var serveCmd = &cobra.Command{
 		anth := anthropic.NewHandler(client, s)
 
 		// Start credential keepalive: check every 10min, refresh accounts older than 1h
-		keeper := keepalive.NewKeeper(s, 1*time.Hour)
-		keeper.Start(10 * time.Minute)
+		var keeper *keepalive.Keeper
+		if s != nil {
+			keeper = keepalive.NewKeeper(s, 1*time.Hour)
+			keeper.Start(10 * time.Minute)
+		} else {
+			log.Printf("Warning: keepalive disabled (store unavailable)")
+		}
 
 		// Per-request client resolution from database accounts
 		if s != nil {
@@ -174,18 +179,20 @@ var serveCmd = &cobra.Command{
 		}
 
 		// Background log cleanup goroutine
-		go func() {
-			ticker := time.NewTicker(1 * time.Hour)
-			defer ticker.Stop()
-			if days := s.GetIntSetting("log_retention_days", 30); days > 0 {
-				s.CleanupOldLogs(days)
-			}
-			for range ticker.C {
+		if s != nil {
+			go func() {
+				ticker := time.NewTicker(1 * time.Hour)
+				defer ticker.Stop()
 				if days := s.GetIntSetting("log_retention_days", 30); days > 0 {
 					s.CleanupOldLogs(days)
 				}
-			}
-		}()
+				for range ticker.C {
+					if days := s.GetIntSetting("log_retention_days", 30); days > 0 {
+						s.CleanupOldLogs(days)
+					}
+				}
+			}()
+		}
 
 		mux := http.NewServeMux()
 		srv.RegisterRoutes(mux)
@@ -284,7 +291,9 @@ var serveCmd = &cobra.Command{
 		if err := httpSrv.Shutdown(ctx); err != nil {
 			log.Printf("Server shutdown error: %v", err)
 		}
-		keeper.Stop()
+		if keeper != nil {
+			keeper.Stop()
+		}
 		if s != nil {
 			s.Close()
 		}

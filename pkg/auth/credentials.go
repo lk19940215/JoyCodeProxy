@@ -29,7 +29,30 @@ const (
 	containerStateDB = "/root/.joycode-ide/state.vscdb"
 )
 
-// LoadFromSystem reads ptKey from local JoyCode state database (macOS).
+// JoyCodeStateDBPath returns the platform-specific path to JoyCode's state.vscdb.
+func JoyCodeStateDBPath() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("cannot determine home directory: %w", err)
+	}
+	switch runtime.GOOS {
+	case "darwin":
+		return filepath.Join(home, "Library", "Application Support",
+			"JoyCode", "User", "globalStorage", "state.vscdb"), nil
+	case "windows":
+		appData := os.Getenv("APPDATA")
+		if appData == "" {
+			appData = filepath.Join(home, "AppData", "Roaming")
+		}
+		return filepath.Join(appData, "JoyCode", "User", "globalStorage", "state.vscdb"), nil
+	case "linux":
+		return filepath.Join(home, ".config", "JoyCode", "User", "globalStorage", "state.vscdb"), nil
+	default:
+		return "", fmt.Errorf("unsupported OS %s for auto credential detection; set %s manually", runtime.GOOS, stateDBEnv)
+	}
+}
+
+// LoadFromSystem reads ptKey from local JoyCode state database.
 func LoadFromSystem() (*Credentials, error) {
 	if dbPath := os.Getenv(stateDBEnv); dbPath != "" {
 		return loadFromStateDB(dbPath)
@@ -37,16 +60,11 @@ func LoadFromSystem() (*Credentials, error) {
 	if _, err := os.Stat(containerStateDB); err == nil {
 		return loadFromStateDB(containerStateDB)
 	}
-	if runtime.GOOS != "darwin" {
-		return nil, fmt.Errorf("auto credential extraction requires macOS JoyCode IDE state; in Docker, mount state.vscdb to %s or set %s", containerStateDB, stateDBEnv)
-	}
-	home, err := os.UserHomeDir()
+
+	dbPath, err := JoyCodeStateDBPath()
 	if err != nil {
-		return nil, fmt.Errorf("cannot determine home directory: %w", err)
+		return nil, err
 	}
-	dbPath := filepath.Join(home,
-		"Library", "Application Support",
-		"JoyCode", "User", "globalStorage", "state.vscdb")
 
 	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
 		return nil, fmt.Errorf("JoyCode state database not found at %s\n  Please install and log in to JoyCode IDE first", dbPath)

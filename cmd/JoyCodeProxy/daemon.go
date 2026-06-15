@@ -18,6 +18,12 @@ import (
 	"github.com/vibe-coding-labs/JoyCodeProxy/pkg/logrot"
 )
 
+// Platform-specific helpers are in daemon_proc_unix.go / daemon_proc_windows.go:
+//   setDetachedProcAttr(cmd *exec.Cmd)
+//   sendTermSignal(proc *os.Process) error
+//   sendKillSignal(proc *os.Process) error
+//   isProcessRunning(proc *os.Process) bool
+
 const (
 	daemonChildEnv    = "_JOYCODE_DAEMON_CHILD"
 	daemonSupervisorEnv = "_JOYCODE_DAEMON_SUPERVISOR"
@@ -151,7 +157,7 @@ func startDaemon() error {
 	cmd.Stdin = nil
 	cmd.Stdout = nil
 	cmd.Stderr = nil
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	setDetachedProcAttr(cmd)
 
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("failed to start daemon supervisor: %w", err)
@@ -186,7 +192,7 @@ func stopDaemon() error {
 		return nil
 	}
 
-	if err := proc.Signal(syscall.SIGTERM); err != nil {
+	if err := sendTermSignal(proc); err != nil {
 		removePIDFile()
 		fmt.Printf("Daemon process %d not responding: %v\n", pidData.PID, err)
 		return nil
@@ -201,7 +207,7 @@ func stopDaemon() error {
 	select {
 	case <-done:
 	case <-time.After(5 * time.Second):
-		proc.Signal(syscall.SIGKILL)
+		sendKillSignal(proc)
 	}
 
 	removePIDFile()
@@ -222,7 +228,7 @@ func daemonStatusCmdRun() error {
 		return nil
 	}
 
-	if err := proc.Signal(syscall.Signal(0)); err != nil {
+	if !isProcessRunning(proc) {
 		fmt.Printf("Daemon PID %d — NOT running (stale PID file)\n", pidData.PID)
 		removePIDFile()
 		return nil
@@ -310,7 +316,7 @@ func RunSupervisor(port int) {
 		cmd.Env = append(os.Environ(), daemonChildEnv+"=1")
 		cmd.Stdout = rw
 		cmd.Stderr = rw
-		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+		setDetachedProcAttr(cmd)
 
 		log.Printf("[supervisor] spawning child process")
 		if err := cmd.Start(); err != nil {
@@ -341,7 +347,7 @@ func RunSupervisor(port int) {
 
 		case sig := <-sigCh:
 			log.Printf("[supervisor] received %v — shutting down", sig)
-			cmd.Process.Signal(syscall.SIGTERM)
+			sendTermSignal(cmd.Process)
 			cmd.Wait()
 			removePIDFile()
 			log.Printf("[supervisor] stopped")
@@ -396,7 +402,7 @@ func checkRunningDaemon() (int, bool) {
 	if err != nil {
 		return 0, false
 	}
-	if err := proc.Signal(syscall.Signal(0)); err != nil {
+	if !isProcessRunning(proc) {
 		removePIDFile()
 		return 0, false
 	}

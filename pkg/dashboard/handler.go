@@ -1221,12 +1221,11 @@ func (h *Handler) handleClearJoyCodeSession(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	home, err := os.UserHomeDir()
+	dbPath, err := auth.JoyCodeStateDBPath()
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "cannot determine home directory")
+		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	dbPath := filepath.Join(home, "Library", "Application Support", "JoyCode", "User", "globalStorage", "state.vscdb")
 	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
 		writeError(w, http.StatusNotFound, "JoyCode 本地数据库不存在，请先安装 JoyCode IDE")
 		return
